@@ -64,6 +64,9 @@ if (typeof tinyMCE != 'undefined') {
         plugins: "inlinepopups,contextmenu,tabfocus,searchreplace,fullscreen,advimage,advlink,paste,media,table",
         advimage_update_dimensions_onchange: true,
 
+        // Keep inline CSS styles
+        inline_styles : true,
+
         // remove MS Word's inline styles when copying and pasting.
         paste_remove_spans: true,
         paste_auto_cleanup_on_paste : true,
