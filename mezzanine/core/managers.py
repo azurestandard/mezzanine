@@ -239,7 +239,7 @@ class CurrentSiteManager(DjangoCSM):
         if not self.__is_validated:
             self._validate_field_name()
         lookup = {self.__field_name + "__id__exact": current_site_id()}
-        return super(DjangoCSM, self).get_query_set().filter(**lookup)
+        return super(DjangoCSM, self).get_query_set()#.filter(**lookup)
 
 
 class DisplayableManager(CurrentSiteManager, PublishedManager,
