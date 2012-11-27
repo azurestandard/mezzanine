@@ -41,7 +41,7 @@ class PageMiddleware(object):
             page = pages[0]
         else:
             # If we can't find a page matching this slug or any
-            # of its sub-slugs, continue processing (for a likely 404).
+            # of its sub-slugs, continue processing.
             return None
 
         # Handle ``page.login_required``.
