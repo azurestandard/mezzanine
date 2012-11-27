@@ -39,11 +39,9 @@ class PageMiddleware(object):
                         for_user=request.user, include_login_required=True)
         if pages:
             page = pages[0]
-        elif 'mezz' in view_func.__module__:
-            return view_func(request, *view_args, **view_kwargs)
         else:
             # If we can't find a page matching this slug or any
-            # of its sub-slugs, skip all further processing.
+            # of its sub-slugs, continue processing (for a likely 404).
             return None
 
         # Handle ``page.login_required``.
