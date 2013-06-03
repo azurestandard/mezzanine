@@ -1,10 +1,13 @@
 
 from __future__ import with_statement
 import os
+import sys
 
 
 exclude = ["mezzanine/project_template/dev.db",
            "mezzanine/project_template/local_settings.py"]
+if sys.argv == ["setup.py", "test"]:
+    exclude = []
 exclude = dict([(e, None) for e in exclude])
 for e in exclude:
     if e.endswith(".py"):
@@ -24,9 +27,10 @@ from setuptools import setup, find_packages
 from mezzanine import __version__ as version
 
 install_requires = [
-    "django >= 1.3.3",
-    "filebrowser_safe >= 0.2.12",
-    "grappelli_safe >= 0.2.10",
+    "django >= 1.4, < 1.6",
+    "filebrowser_safe >= 0.2.27",
+    "grappelli_safe >= 0.2.21",
+    "html5lib == 0.95",
     "bleach",
     "pytz",
 ]
@@ -34,7 +38,12 @@ install_requires = [
 try:
     from PIL import Image, ImageOps
 except ImportError:
-    install_requires += ["pillow"]
+    try:
+        import Image, ImageFile, ImageOps
+    except ImportError:
+        # no way to install pillow/PIL with jython, so exclude this in any case
+        if not sys.platform.startswith('java'):
+            install_requires += ["pillow"]
 
 
 try:
@@ -57,6 +66,8 @@ try:
             [console_scripts]
             mezzanine-project=mezzanine.bin.mezzanine_project:create_project
         """,
+        test_suite="runtests.runtests",
+        tests_require=["pyflakes==0.6.1", "pep8==1.4.1"],
         classifiers=[
             "Development Status :: 4 - Beta",
             "Environment :: Web Environment",

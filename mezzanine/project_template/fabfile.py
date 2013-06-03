@@ -1,10 +1,11 @@
-
 import os
+import re
 import sys
 from functools import wraps
 from getpass import getpass, getuser
 from glob import glob
 from contextlib import contextmanager
+from posixpath import join
 
 from fabric.api import env, cd, prefix, sudo as _sudo, run as _run, hide, task
 from fabric.contrib.files import exists, upload_template
@@ -16,7 +17,8 @@ from fabric.colors import yellow, green, blue, red
 ################
 
 conf = {}
-if sys.argv[0].split(os.sep)[-1] == "fab":
+if sys.argv[0].split(os.sep)[-1] in ("fab",             # POSIX
+                                     "fab-script.py"):  # Windows
     # Ensure we import settings from the current dir
     try:
         conf = __import__("settings", globals(), locals(), [], 0).FABRIC
@@ -43,7 +45,8 @@ env.proj_path = "%s/%s" % (env.venv_path, env.proj_dirname)
 env.manage = "%s/bin/python %s/project/manage.py" % (env.venv_path,
                                                      env.venv_path)
 env.live_host = conf.get("LIVE_HOSTNAME", env.hosts[0] if env.hosts else None)
-env.repo_url = conf.get("REPO_URL", None)
+env.repo_url = conf.get("REPO_URL", "")
+env.git = env.repo_url.startswith("git") or env.repo_url.endswith(".git")
 env.reqs_path = conf.get("REQUIREMENTS_PATH", None)
 env.gunicorn_port = conf.get("GUNICORN_PORT", 8000)
 env.locale = conf.get("LOCALE", "en_US.UTF-8")
@@ -115,7 +118,7 @@ def update_changed_requirements():
     Checks for changes in the requirements file across an update,
     and gets new requirements if changes have occurred.
     """
-    reqs_path = os.path.join(env.proj_path, env.reqs_path)
+    reqs_path = join(env.proj_path, env.reqs_path)
     get_reqs = lambda: run("cat %s" % reqs_path, show=False)
     old_reqs = get_reqs() if env.reqs_path else ""
     yield
@@ -212,6 +215,8 @@ def upload_template_and_reload(name):
             remote_data = sudo("cat %s" % remote_path, show=False)
     with open(local_path, "r") as f:
         local_data = f.read()
+        # Escape all non-string-formatting-placeholder occurrences of '%':
+        local_data = re.sub(r"%(?!\(\w+\)s)", "%%", local_data)
         if "%(db_pass)s" in local_data:
             env.db_pass = db_pass()
         local_data %= env
@@ -307,7 +312,7 @@ def static():
     Returns the live STATIC_ROOT directory.
     """
     return python("from django.conf import settings;"
-                  "print settings.STATIC_ROOT").split("\n")[-1]
+                  "print settings.STATIC_ROOT", show=False).split("\n")[-1]
 
 
 @task
@@ -360,7 +365,7 @@ def create():
                 return False
             remove()
         run("virtualenv %s --distribute" % env.proj_name)
-        vcs = "git" if env.repo_url.startswith("git") else "hg"
+        vcs = "git" if env.git else "hg"
         run("%s clone %s %s" % (vcs, env.repo_url, env.proj_path))
 
     # Create DB and DB user.
@@ -383,15 +388,15 @@ def create():
         key_file = env.proj_name + ".key"
         if not exists(crt_file) and not exists(key_file):
             try:
-                crt_local, = glob(os.path.join("deploy", "*.crt"))
-                key_local, = glob(os.path.join("deploy", "*.key"))
+                crt_local, = glob(join("deploy", "*.crt"))
+                key_local, = glob(join("deploy", "*.key"))
             except ValueError:
                 parts = (crt_file, key_file, env.live_host)
                 sudo("openssl req -new -x509 -nodes -out %s -keyout %s "
                      "-subj '/CN=%s' -days 3650" % parts)
             else:
-                upload_template(crt_file, crt_local, use_sudo=True)
-                upload_template(key_file, key_local, use_sudo=True)
+                upload_template(crt_local, crt_file, use_sudo=True)
+                upload_template(key_local, key_file, use_sudo=True)
 
     # Set up project.
     upload_template_and_reload("settings")
@@ -400,7 +405,7 @@ def create():
             pip("-r %s/%s" % (env.proj_path, env.reqs_path))
         pip("gunicorn setproctitle south psycopg2 "
             "django-compressor python-memcached")
-        manage("createdb --noinput")
+        manage("createdb --noinput --nodata")
         python("from django.conf import settings;"
                "from django.contrib.sites.models import Site;"
                "site, _ = Site.objects.get_or_create(id=settings.SITE_ID);"
@@ -408,7 +413,8 @@ def create():
                "site.save();")
         if env.admin_pass:
             pw = env.admin_pass
-            user_py = ("from django.contrib.auth.models import User;"
+            user_py = ("from mezzanine.utils.models import get_user_model;"
+                       "User = get_user_model();"
                        "u, _ = User.objects.get_or_create(username='admin');"
                        "u.is_staff = u.is_superuser = True;"
                        "u.set_password('%s');"
@@ -475,9 +481,12 @@ def deploy():
         upload_template_and_reload(name)
     with project():
         backup("last.db")
-        run("tar -cf last.tar %s" % static())
-        git = env.repo_url.startswith("git")
-        run("%s > last.commit" % "git rev-parse HEAD" if git else "hg id -i")
+        static_dir = static()
+        if exists(static_dir):
+            run("tar -cf last.tar %s" % static_dir)
+        git = env.git
+        last_commit = "git rev-parse HEAD" if git else "hg id -i"
+        run("%s > last.commit" % last_commit)
         with update_changed_requirements():
             run("git pull origin master -f" if git else "hg pull && hg up -C")
         manage("collectstatic -v 0 --noinput")
@@ -499,11 +508,10 @@ def rollback():
     """
     with project():
         with update_changed_requirements():
-            git = env.repo_url.startswith("git")
-            update = "git checkout" if git else "hg up -C"
+            update = "git checkout" if env.git else "hg up -C"
             run("%s `cat last.commit`" % update)
-        with cd(os.path.join(static(), "..")):
-            run("tar -xf %s" % os.path.join(env.proj_path, "last.tar"))
+        with cd(join(static(), "..")):
+            run("tar -xf %s" % join(env.proj_path, "last.tar"))
         restore("last.db")
     restart()
 
